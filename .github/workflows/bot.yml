@@ -3,6 +3,11 @@ name: Bot
 on:
   workflow_dispatch:
 
+# Only ONE bot run may live at a time: a new dispatch cancels the old run.
+concurrency:
+  group: bot-single
+  cancel-in-progress: true
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
@@ -43,7 +48,6 @@ jobs:
           git push || true
 
       - name: Restart bot
-        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run bot.yml --ref main || true
