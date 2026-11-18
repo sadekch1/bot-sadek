@@ -77,34 +77,58 @@ async function start() {
 
   sock.ev.on('creds.update', saveCreds);
 
+  // Pairing-code login: when there is no registered session, print a code
+  // in the run log; the owner enters it in WhatsApp > Linked devices >
+  // Link with phone number. A fresh code is reprinted every 90s until paired.
+  let pairingTimer = null;
+  const printPairingCode = async () => {
+    try {
+      const code = await sock.requestPairingCode(config.phone);
+      console.log('================================================');
+      console.log('  PAIRING CODE: ' + code);
+      console.log('  WhatsApp > Linked devices > Link a device');
+      console.log('  > Link with phone number > enter this code');
+      console.log('================================================');
+    } catch (e) {
+      console.log('[bot] pairing failed: ' + e.message);
+    }
+  };
+  const startPairing = () => {
+    if (pairingAsked || !config.phone) return;
+    pairingAsked = true;
+    setTimeout(printPairingCode, 4000);
+    pairingTimer = setInterval(() => {
+      if (state.creds.registered) { clearInterval(pairingTimer); pairingTimer = null; return; }
+      printPairingCode();
+    }, 90000);
+  };
+
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
     if (qr) console.log('[bot] QR code generated');
     if (connection === 'connecting') console.log('[bot] connecting...');
-    if (connection === 'open') console.log('[bot] connected ✔');
-    if (!state.creds.registered && config.phone && !pairingAsked) {
-      pairingAsked = true;
-      setTimeout(async () => {
-        try {
-          const code = await sock.requestPairingCode(config.phone);
-          console.log('════════════════════════════════════════');
-          console.log('  PAIRING CODE: ' + code);
-          console.log('  Enter it in WhatsApp > Linked devices');
-          console.log('════════════════════════════════════════');
-        } catch (e) {
-          console.log('[bot] pairing failed: ' + e.message);
-        }
-      }, 4000);
+    if (connection === 'open') {
+      console.log('[bot] connected ✔');
+      if (pairingTimer) { clearInterval(pairingTimer); pairingTimer = null; }
     }
+    if (!state.creds.registered) startPairing();
     if (connection === 'close') {
-      // Same policy as the old bot: unless logged out, wait 5s and restart fully.
       const statusCode = lastDisconnect && lastDisconnect.error && lastDisconnect.error.output && lastDisconnect.error.output.statusCode;
-      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      console.log('[bot] connection closed, status=' + statusCode + (shouldReconnect ? ', reconnecting in 5s...' : ' (logged out)'));
-      if (shouldReconnect) {
-        await new Promise((r) => setTimeout(r, 5000));
-        start().catch((e) => console.log('[bot] restart error: ' + e.message));
+      const loggedOut = statusCode === DisconnectReason.loggedOut;
+      console.log('[bot] connection closed, status=' + statusCode + (loggedOut ? ' (logged out)' : ', reconnecting in 5s...'));
+      if (pairingTimer) { clearInterval(pairingTimer); pairingTimer = null; }
+      pairingAsked = false;
+      if (loggedOut) {
+        // Dead session: wipe it so the restart falls back to pairing-code
+        // mode and prints a fresh code in this same run's log.
+        try {
+          const dir = path.join(process.cwd(), 'session');
+          for (const f of fs.readdirSync(dir)) if (f.endsWith('.json')) fs.unlinkSync(path.join(dir, f));
+          console.log('[bot] dead session wiped — restarting for a fresh pairing code');
+        } catch (e) { console.log('[bot] session wipe failed: ' + e.message); }
       }
+      await new Promise((r) => setTimeout(r, 5000));
+      start().catch((e) => console.log('[bot] restart error: ' + e.message));
     }
   });
 
