@@ -121,7 +121,10 @@ async function start() {
 }
 
 async function handleMessage(sock, mek) {
-  if (!mek.message || (mek.key && mek.key.fromMe)) return;
+  if (!mek.message) return;
+  // NOTE: fromMe messages are processed on purpose — like the old bot, the
+  // owner commands the bot from his own phone (self-chat and groups), and
+  // those arrive as fromMe on the bot account's socket.
   const chatId = mek.key.remoteJid;
   if (!chatId || chatId === 'status@broadcast') return;
   const senderId = mek.key.participant || mek.key.remoteJid || '';
