@@ -1,0 +1,1 @@
+{"dependencies":{"@whiskeysockets/baileys":"7.0.0-rc.9","axios":"^1.7.9","pino":"^9.6.0"},"description":"WhatsApp bot with a small fixed core and easy plugins (bash or node)","main":"index.js","name":"sadek-bot-v2","scripts":{"start":"node index.js"},"type":"commonjs","version":"2.0.0"}

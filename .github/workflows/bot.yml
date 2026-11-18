@@ -1,0 +1,50 @@
+name: Bot
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Ensure ffmpeg
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          fi
+          ffmpeg -version | head -1
+
+      - name: Run bot
+        run: timeout $((18000 + RANDOM % 2400)) node index.js || true
+
+      - name: Save session and data
+        if: always()
+        run: |
+          git config user.name "bot"
+          git config user.email "bot@local"
+          git add session data || true
+          git diff --cached --quiet || git commit -m "save session and data"
+          git pull --rebase || true
+          git push || true
+
+      - name: Restart bot
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run bot.yml --ref main || true
