@@ -13,6 +13,7 @@ const {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore,
 } = require('@whiskeysockets/baileys');
 
 const store = require('./core/store');
@@ -55,20 +56,30 @@ async function start() {
   const { state, saveCreds } = await useMultiFileAuthState(path.join(process.cwd(), 'session'));
   const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }));
 
+  // Connection options: the SAME as the old (monolith) bot — do not change casually.
   const sock = makeWASocket({
     version,
-    auth: state,
     logger: pino({ level: 'silent' }),
-    browser: ['Sadek Bot v2', 'Chrome', '2.0.0'],
+    printQRInTerminal: !config.phone,
+    browser: ['Ubuntu', 'Chrome', '20.0.04'],
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'fatal' }).child({ level: 'fatal' })),
+    },
+    markOnlineOnConnect: false,
     generateHighQualityLinkPreview: true,
     syncFullHistory: false,
+    defaultQueryTimeoutMs: 60000,
+    connectTimeoutMs: 60000,
+    keepAliveIntervalMs: 10000,
   });
   msgr = new Messenger(sock);
 
   sock.ev.on('creds.update', saveCreds);
 
   sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect } = update;
+    const { connection, lastDisconnect, qr } = update;
+    if (qr) console.log('[bot] QR code generated');
     if (connection === 'connecting') console.log('[bot] connecting...');
     if (connection === 'open') console.log('[bot] connected ✔');
     if (!state.creds.registered && config.phone && !pairingAsked) {
@@ -86,10 +97,14 @@ async function start() {
       }, 4000);
     }
     if (connection === 'close') {
+      // Same policy as the old bot: unless logged out, wait 5s and restart fully.
       const statusCode = lastDisconnect && lastDisconnect.error && lastDisconnect.error.output && lastDisconnect.error.output.statusCode;
-      const loggedOut = statusCode === DisconnectReason.loggedOut;
-      console.log('[bot] connection closed, status=' + statusCode + (loggedOut ? ' (logged out)' : ', reconnecting...'));
-      if (!loggedOut) setTimeout(() => start().catch((e) => console.log('[bot] restart error: ' + e.message)), 3000);
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      console.log('[bot] connection closed, status=' + statusCode + (shouldReconnect ? ', reconnecting in 5s...' : ' (logged out)'));
+      if (shouldReconnect) {
+        await new Promise((r) => setTimeout(r, 5000));
+        start().catch((e) => console.log('[bot] restart error: ' + e.message));
+      }
     }
   });
 
@@ -184,4 +199,11 @@ async function handleMessage(sock, mek) {
   }
 }
 
-start().catch((e) => console.log('[bot] fatal: ' + e.message));
+// Same as the old bot: a failed start waits 5s and tries again.
+async function boot() {
+  try { await start(); } catch (e) {
+    console.log('[bot] start error: ' + e.message + ' — retrying in 5s');
+    setTimeout(boot, 5000);
+  }
+}
+boot();
