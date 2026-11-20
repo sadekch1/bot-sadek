@@ -20,8 +20,10 @@ const store = require('../../core/store.js');
 const fetchx = require('../../core/fetch.js');
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-const TEXT_MODEL = 'gemini-2.5-flash';
-const IMAGE_MODEL = 'gemini-2.5-flash-image';
+// سلاسل احتياط: Google تحجب النماذج القديمة عن المفاتيح الجديدة وتتقاعد بسرعة،
+// فنجرّب بالترتيب وأول نموذج يردّ هو المستعمل (2.5-flash محجوب عن الجدد منذ 2026-09)
+const TEXT_MODELS = ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite'];
+const IMAGE_MODELS = ['gemini-3.1-flash-image', 'gemini-3.1-flash-lite-image'];
 const MAX_HISTORY = 10;              // آخر تبادلات محفوظة لكل محادثة
 const MAX_DOC_CHARS = 3000;          // فوق هذا تُرسل الإجابة ملفاً
 const MEM_PREFIX = 'gemini_mem_';
@@ -47,33 +49,37 @@ function apiKey() { return process.env.GEMINI_API_KEY || ''; }
 
 // عقد core/fetch.js الحقيقي: request(method, url, { data, headers, responseType })
 // والرد axios: النص المُحلَّل في res.data، والأخطاء تُرمى وفيها e.response.data
-async function callGemini(model, payload) {
+async function callGemini(models, payload) {
     const key = apiKey();
     if (!key) throw new Error('مفتاح GEMINI_API_KEY غير مضبوط في أسرار GitHub');
-    let res;
-    try {
-        res = await fetchx.request('POST', `${API_BASE}/${model}:generateContent`, {
-            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-            data: payload,
-            responseType: 'json',
-            timeout: 120000,
-            tries: 1
-        });
-    } catch (e) {
-        const apiMsg = e && e.response && e.response.data && e.response.data.error && e.response.data.error.message;
-        throw new Error('Gemini: ' + (apiMsg || (e && e.message) || 'خطأ غير معروف'));
+    let lastMsg = 'خطأ غير معروف';
+    for (const model of models) {
+        try {
+            const res = await fetchx.request('POST', `${API_BASE}/${model}:generateContent`, {
+                headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+                data: payload,
+                responseType: 'json',
+                timeout: 120000,
+                tries: 1
+            });
+            return res.data || {};
+        } catch (e) {
+            const apiMsg = e && e.response && e.response.data && e.response.data.error && e.response.data.error.message;
+            lastMsg = apiMsg || (e && e.message) || lastMsg;
+            // ننتقل للنموذج التالي في السلسلة (محجوب/متقاعد/مشغول…)
+        }
     }
-    return res.data || {};
+    throw new Error('Gemini: ' + lastMsg);
 }
 
 async function geminiText(contents) {
-    const data = await callGemini(TEXT_MODEL, { contents });
+    const data = await callGemini(TEXT_MODELS, { contents });
     const parts = (((data.candidates || [])[0] || {}).content || {}).parts || [];
     return parts.map((p) => p.text || '').join('').trim();
 }
 
 async function geminiImage(prompt) {
-    const data = await callGemini(IMAGE_MODEL, {
+    const data = await callGemini(IMAGE_MODELS, {
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: { responseModalities: ['IMAGE'] }
     });
