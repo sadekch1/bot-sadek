@@ -35,6 +35,8 @@ jobs:
           ffmpeg -version | head -1
 
       - name: Run bot
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: timeout $((18000 + RANDOM % 2400)) node index.js || true
 
       - name: Save session and data
