@@ -45,39 +45,38 @@ function toWhatsApp(md) {
 // ── نداء Gemini ─────────────────────────────────────────────────
 function apiKey() { return process.env.GEMINI_API_KEY || ''; }
 
-async function geminiText(contents) {
+// عقد core/fetch.js الحقيقي: request(method, url, { data, headers, responseType })
+// والرد axios: النص المُحلَّل في res.data، والأخطاء تُرمى وفيها e.response.data
+async function callGemini(model, payload) {
     const key = apiKey();
     if (!key) throw new Error('مفتاح GEMINI_API_KEY غير مضبوط في أسرار GitHub');
-    const res = await fetchx.request(`${API_BASE}/${TEXT_MODEL}:generateContent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-        body: JSON.stringify({ contents })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-        const msg = (data && data.error && data.error.message) || ('HTTP ' + res.status);
-        throw new Error('Gemini: ' + msg);
+    let res;
+    try {
+        res = await fetchx.request('POST', `${API_BASE}/${model}:generateContent`, {
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+            data: payload,
+            responseType: 'json',
+            timeout: 120000,
+            tries: 1
+        });
+    } catch (e) {
+        const apiMsg = e && e.response && e.response.data && e.response.data.error && e.response.data.error.message;
+        throw new Error('Gemini: ' + (apiMsg || (e && e.message) || 'خطأ غير معروف'));
     }
+    return res.data || {};
+}
+
+async function geminiText(contents) {
+    const data = await callGemini(TEXT_MODEL, { contents });
     const parts = (((data.candidates || [])[0] || {}).content || {}).parts || [];
     return parts.map((p) => p.text || '').join('').trim();
 }
 
 async function geminiImage(prompt) {
-    const key = apiKey();
-    if (!key) throw new Error('مفتاح GEMINI_API_KEY غير مضبوط في أسرار GitHub');
-    const res = await fetchx.request(`${API_BASE}/${IMAGE_MODEL}:generateContent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-        body: JSON.stringify({
-            contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            generationConfig: { responseModalities: ['IMAGE'] }
-        })
+    const data = await callGemini(IMAGE_MODEL, {
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { responseModalities: ['IMAGE'] }
     });
-    const data = await res.json();
-    if (!res.ok) {
-        const msg = (data && data.error && data.error.message) || ('HTTP ' + res.status);
-        throw new Error('Gemini: ' + msg);
-    }
     const parts = (((data.candidates || [])[0] || {}).content || {}).parts || [];
     for (const p of parts) {
         const inline = p.inlineData || p.inline_data;
